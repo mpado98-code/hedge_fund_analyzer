@@ -24,9 +24,10 @@ jobs:
         run: python -m tracker
       - name: Commit positions
         if: always()
+        shell: bash
         run: |
-          git config user.name  "hedgefund-bot"
+          git config user.name "hedgefund-bot"
           git config user.email "bot@noreply.local"
-          git add data/ 2>/dev/null || true
-          git diff --staged --quiet || git commit -m "tracker: $(date -u +%F)"
-          git push ||
+          git add -A
+          git commit -m "tracker auto update" || echo "nothing to commit"
+          git push || echo "pu
