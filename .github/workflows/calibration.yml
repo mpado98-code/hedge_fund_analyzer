@@ -24,8 +24,9 @@ jobs:
         run: python -m calibration_runner
       - name: Commit calibration
         if: always()
+        shell: bash
         run: |
-          git config user.name  "hedgefund-bot"
+          git config user.name "hedgefund-bot"
           git config user.email "bot@noreply.local"
-          git add data/ 2>/dev/null || true
-          git diff --staged --quiet || git commit -m "calibration: $(dat
+          git add -A
+          git commit -m "calibration auto update" || echo "nothing to commit
