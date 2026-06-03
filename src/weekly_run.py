@@ -42,25 +42,41 @@ MAX_FMP_CALLS_PER_TICKER = 10  # profile, ratios, key_metrics, income, cashflow,
 DAILY_FMP_BUDGET = 240  # safety margin sotto 250
 
 
+def _yf_session():
+    """Sessione curl_cffi che impersona Chrome — bypassa il blocco Yahoo che fa fallire JSONDecodeError."""
+    try:
+        from curl_cffi import requests as cffi_requests
+        return cffi_requests.Session(impersonate="chrome")
+    except Exception:
+        return None
+
+
 def download_prices(tickers: list[str], period: str = "1y") -> dict:
     log.info(f"Downloading prices for {len(tickers)} tickers...")
     data = {}
-    # yfinance bulk download (batch)
+    sess = _yf_session()
     batch_size = 50
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i + batch_size]
-        try:
-            df = yf.download(batch, period=period, progress=False, auto_adjust=True, group_by="ticker", threads=True)
-            for t in batch:
-                try:
-                    sub = df[t] if len(batch) > 1 else df
-                    if not sub.empty and "Close" in sub.columns:
-                        data[t] = sub.dropna()
-                except Exception:
-                    continue
-        except Exception as e:
-            log.warning(f"bulk dl batch {i}: {e}")
-            time.sleep(2)
+        attempt = 0
+        while attempt < 3:
+            try:
+                df = yf.download(
+                    batch, period=period, progress=False, auto_adjust=True,
+                    group_by="ticker", threads=True, session=sess,
+                )
+                for t in batch:
+                    try:
+                        sub = df[t] if len(batch) > 1 else df
+                        if not sub.empty and "Close" in sub.columns:
+                            data[t] = sub.dropna()
+                    except Exception:
+                        continue
+                break
+            except Exception as e:
+                attempt += 1
+                log.warning(f"bulk dl batch {i} attempt {attempt}: {e}")
+                time.sleep(3 * attempt)
     log.info(f"  -> ok per {len(data)} su {len(tickers)}")
     return data
 
@@ -186,6 +202,11 @@ def main():
 
     # 4. Universe prices
     prices = download_prices(tickers, period="1y")
+    if len(prices) < 50:
+        msg = f"⚠️ Weekly run abort: yfinance ha scaricato solo {len(prices)}/{len(tickers)} prezzi. Probabile rate-limit Yahoo. Riprova tra qualche ora."
+        log.error(msg)
+        telegram_send(msg, parse_mode=None)
+        return
 
     # 5. Pre-screen
     short_picks, long_picks = pre_screen(universe, prices)
@@ -247,23 +268,4 @@ def main():
     save_json(DATA_DIR / "watchlist.json", {"updated": now_iso(), "tickers": watchlist_index})
 
     # 12. Top 10 ranking
-    top_short = sorted(results_short, key=lambda x: x["score"], reverse=True)[:10]
-    top_long = sorted(results_long, key=lambda x: x["score"], reverse=True)[:10]
-    save_json(DATA_DIR / "ranking_latest.json", {
-        "asof": now_iso(),
-        "regime": regime,
-        "macro": macro,
-        "top_short": [{"ticker": x["ticker"], "score": x["score"], "headline": x["headline"]} for x in top_short],
-        "top_long":  [{"ticker": x["ticker"], "score": x["score"], "headline": x["headline"]} for x in top_long],
-    })
-
-    # 13. Telegram
-    telegram_send(format_ranking(top_short, "short", regime))
-    time.sleep(2)
-    telegram_send(format_ranking(top_long, "long", regime))
-
-    log.info(f"=== WEEKLY DONE  short top={top_short[0]['ticker']}  long top={top_long[0]['ticker']} ===")
-
-
-if __name__ == "__main__":
-    main()
+    top_short = sorted(results_short,
