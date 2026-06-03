@@ -23,9 +23,10 @@ jobs:
           PYTHONPATH:         src
         run: python -m tracker
       - name: Commit positions
+        if: always()
         run: |
           git config user.name  "hedgefund-bot"
           git config user.email "bot@noreply.local"
-          git add data/positions.json data/performance_latest.json
+          git add data/ 2>/dev/null || true
           git diff --staged --quiet || git commit -m "tracker: $(date -u +%F)"
-          git push
+          git push ||
