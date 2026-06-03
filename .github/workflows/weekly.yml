@@ -34,4 +34,6 @@ jobs:
           git config user.name "hedgefund-bot"
           git config user.email "bot@noreply.local"
           git add -A
-          git commit -m "weekly auto update" || echo "nothin
+          git commit -m 'weekly auto update' || echo 'nothing to commit'
+          git push || echo 'push failed'
+          exit 0
