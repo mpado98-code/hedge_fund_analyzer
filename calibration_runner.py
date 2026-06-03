@@ -228,8 +228,34 @@ def calibrate_long():
 
 
 def main():
-    calibrate_short()
-    calibrate_long()
+    # Garantisce universe.json esistente per entrambe le fasi
+    if not (DATA_DIR / "universe.json").exists():
+        try:
+            universe_mod.build_universe()
+        except Exception as e:
+            log.error(f"universe build fallita: {e}")
+
+    ok_short = ok_long = False
+    try:
+        calibrate_short()
+        ok_short = True
+    except Exception as e:
+        log.error(f"calibrate_short fallito: {e}")
+
+    try:
+        calibrate_long()
+        ok_long = True
+    except Exception as e:
+        log.error(f"calibrate_long fallito: {e}")
+
+    # Scrivi placeholder se mancano, così git add non rompe (e si capisce lo stato)
+    for fname, ok in [("calibration_short.json", ok_short), ("calibration_long.json", ok_long)]:
+        path = DATA_DIR / fname
+        if not path.exists():
+            save_json(path, {"status": "FAILED_OR_NOT_GENERATED", "ts": __import__("datetime").datetime.utcnow().isoformat()})
+
+    if not (ok_short and ok_long):
+        raise SystemExit(f"calibration partial: short={ok_short} long={ok_long}")
 
 
 if __name__ == "__main__":
