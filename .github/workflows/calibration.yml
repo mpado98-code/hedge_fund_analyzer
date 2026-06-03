@@ -29,4 +29,4 @@ jobs:
           git config user.name "hedgefund-bot"
           git config user.email "bot@noreply.local"
           git add -A
-          git commit -m "calibration auto update" || echo "nothing to commit
+          git commit -m "calibration auto update" || echo "nothing to commit"
