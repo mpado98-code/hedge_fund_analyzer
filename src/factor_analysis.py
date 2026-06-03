@@ -46,6 +46,10 @@ def build_factors(enriched: dict, prices: dict) -> dict:
             "rev_cagr": g.get("rev_cagr_pct"),
             "eps_cagr": g.get("eps_cagr_pct"),
         })
+    if not rows:
+        log.warning("build_factors: enriched vuoto, skip")
+        save_json(DATA_DIR / "factors.json", {})
+        return {}
     df = pd.DataFrame(rows).set_index("ticker")
 
     # Momentum (6m / 1m) and lowvol da prezzi
@@ -96,8 +100,3 @@ def build_factors(enriched: dict, prices: dict) -> dict:
                 "z_quality":  round(float(sub_q.get(tk, 0) or 0), 3),
                 "z_lowvol":   round(float(sub_l.get(tk, 0) or 0), 3),
                 "sector": sector,
-            }
-
-    save_json(DATA_DIR / "factors.json", factor_z)
-    log.info(f"Factors computed for {len(factor_z)} tickers")
-    return factor_z
