@@ -1,7 +1,7 @@
-name: Calibration Backtest
+name: Performance Tracker
 on:
   schedule:
-    - cron: "0 3 1 * *"      # 1° del mese, 03:00 UTC
+    - cron: "0 21 * * 5"    # ven 21:00 UTC = 23:00 ITA
   workflow_dispatch:
 
 permissions:
@@ -10,25 +10,25 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install -r requirements.txt
-      - name: Ensure data dir
-        run: mkdir -p data
-      - name: Calibration
+      - name: Tracker
         env:
-          PYTHONPATH: src
-        run: python -m calibration_runner
-      - name: Commit calibration
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PYTHONPATH:         src
+        run: python -m tracker
+      - name: Commit positions
         if: always()
         shell: bash
         run: |
           git config user.name "hedgefund-bot"
           git config user.email "bot@noreply.local"
           git add -A
-          git commit -m 'daily auto update' || echo 'nothing to commit'
+          git commit -m 'tracker auto update' || echo 'nothing to commit'
           git push || echo 'push failed'
           exit 0
