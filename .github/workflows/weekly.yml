@@ -29,5 +29,6 @@ jobs:
           git config user.name "hedgefund-bot"
           git config user.email "bot@noreply.local"
           git add -A
-          git commit -m "tracker auto update" || echo "nothing to commit"
-          git push || echo "pu
+          git commit -m 'daily auto update' || echo 'nothing to commit'
+          git push || echo 'push failed'
+          exit 0
