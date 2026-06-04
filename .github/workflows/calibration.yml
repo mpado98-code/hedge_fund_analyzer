@@ -1,25 +1,32 @@
-name: Bot Listener
+name: Calibration Backtest
 on:
   schedule:
-    - cron: "*/345 * * * *"   # restart ogni ~5h45m per stare sotto i 6h job limit
+    - cron: "0 3 1 * *"      # 1° del mese, 03:00 UTC
   workflow_dispatch:
 
-# Job long-running con re-trigger automatico.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  poll:
+  run:
     runs-on: ubuntu-latest
-    timeout-minutes: 350    # 5h50m
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install -r requirements.txt
-      - name: Polling
+      - name: Ensure data dir
+        run: mkdir -p data
+      - name: Calibration
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          PYTHONPATH:         src
-        run: timeout 340m python -m bot || true
+          PYTHONPATH: src
+        run: python -m calibration_runner
+      - name: Commit calibration
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "hedgefund-bot"
+          git config user.email "bot@noreply.local"
+          git add -A
+          git commit -m "calibration auto update" || echo "nothing to commit
