@@ -1,7 +1,7 @@
-name: Weekly Run
+name: Daily Refresh
 on:
   schedule:
-    - cron: "0 20 * * 0"   # Domenica 20:00 UTC = 22:00 ITA
+    - cron: "30 5 * * 1-5"   # 05:30 UTC = 07:30 ITA, lun-ven
   workflow_dispatch:
 
 permissions:
@@ -10,28 +10,24 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install -r requirements.txt
-      - name: Weekly pipeline
+      - name: Daily refresh
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          FMP_API_KEY:        ${{ secrets.FMP_API_KEY }}
-          FRED_API_KEY:       ${{ secrets.FRED_API_KEY }}
-          NEWSAPI_KEY:        ${{ secrets.NEWSAPI_KEY }}
-          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
-          BIGDATA_API_KEY:    ${{ secrets.BIGDATA_API_KEY }}
           PYTHONPATH:         src
-        run: python -m weekly_run
-      - name: Commit data
+        run: python -m daily_refresh
+      - name: Commit prices
         if: always()
         shell: bash
         run: |
           git config user.name "hedgefund-bot"
           git config user.email "bot@noreply.local"
           git add -A
-          git commit -m "weekly auto update" || echo "nothin
+          git commit -m "daily auto update" || echo "nothing to commit"
+    
