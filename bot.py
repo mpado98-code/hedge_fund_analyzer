@@ -15,6 +15,10 @@ Risponde a comandi:
 """
 from __future__ import annotations
 import json
+import os
+import subprocess
+import threading
+import time
 import yfinance as yf
 from pathlib import Path
 from telegram import Update, constants
@@ -24,6 +28,42 @@ from utils import env, get_logger, load_json, save_json, DATA_DIR, REPORTS_DIR
 log = get_logger("bot")
 
 WATCH_FILE = DATA_DIR / "personal_watchlist.json"
+
+
+def git_pull() -> None:
+    """Sincronizza la cache del repo: prende nuovi report scritti dal weekly_run."""
+    try:
+        subprocess.run(
+            ["git", "pull", "--rebase", "--autostash", "--quiet"],
+            timeout=30, cwd=str(DATA_DIR.parent),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        log.warning(f"git pull: {e}")
+
+
+def _refresh_loop():
+    """Thread di background: git pull ogni 5 minuti."""
+    while True:
+        time.sleep(300)
+        git_pull()
+
+
+def smart_chunks(text: str, size: int = 3800) -> list[str]:
+    """Split su newline, non tagliando frasi a metà."""
+    if len(text) <= size:
+        return [text]
+    chunks, current = [], ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > size:
+            if current:
+                chunks.append(current)
+            current = line
+        else:
+            current = (current + "\n" + line) if current else line
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def live_price(ticker: str) -> dict | None:
@@ -151,32 +191,51 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ticker in ("HELP", "START", "RANK", "MACRO", "REGIME", "PERF"):
         return
 
-    rpt_path = REPORTS_DIR / f"{ticker}.json"
-    # Cerca varianti EU
-    if not rpt_path.exists():
-        for suffix in (".MI", ".PA", ".DE"):
-            alt = REPORTS_DIR / f"{ticker.split('.')[0]}{suffix}.json"
-            if alt.exists():
-                rpt_path = alt
-                ticker = ticker.split('.')[0] + suffix
-                break
+    # Forza un refresh repo per vedere eventuali nuovi report appena committati
+    git_pull()
 
-    if not rpt_path.exists():
+    # Normalizza punto/trattino (BRK.B -> BRK-B salvato da weekly_run)
+    candidates = [ticker, ticker.replace(".", "-"), ticker.replace("-", ".")]
+    # Per ticker senza suffix, prova varianti EU
+    if "." not in ticker and "-" not in ticker:
+        for suffix in (".MI", ".PA", ".DE"):
+            candidates.append(ticker + suffix)
+
+    rpt_path = None
+    for cand in candidates:
+        p = REPORTS_DIR / f"{cand}.json"
+        if p.exists():
+            rpt_path = p
+            ticker = cand
+            break
+
+    if rpt_path is None:
+        # Diagnostica: quanti file ci sono in cache?
+        try:
+            cache_size = len(list(REPORTS_DIR.glob("*.json")))
+        except Exception:
+            cache_size = 0
         await update.message.reply_text(
-            f"❌ {ticker} non in cache. La cache contiene solo i ~400 ticker della watchlist settimanale.\n"
-            f"Il prossimo weekly run (domenica) potrebbe includerlo. Se è un nome major non in lista, segnalalo."
+            f"❌ {ticker} non in cache.\n\n"
+            f"Cache attuale: {cache_size} ticker.\n"
+            f"Cause possibili:\n"
+            f"• Il weekly_run non è ancora andato a buon fine\n"
+            f"• Il ticker non è nei ~400 enricchiti questa settimana\n"
+            f"• Yahoo Finance ha rate-limitato il download\n\n"
+            f"Manda /rank per vedere cosa c'è effettivamente in cache, oppure rilancia Weekly Run dal tab Actions.",
+            parse_mode=None,
         )
         return
 
     report = json.loads(rpt_path.read_text(encoding="utf-8"))
     live = live_price(ticker)
     text = format_report(report, live)
-    # Telegram limit 4096 chars
-    for i in range(0, len(text), 3900):
-        await update.message.reply_text(text[i:i + 3900], parse_mode=constants.ParseMode.MARKDOWN)
+    for chunk in smart_chunks(text):
+        await update.message.reply_text(chunk, parse_mode=constants.ParseMode.MARKDOWN)
 
 
 async def cmd_rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    git_pull()
     rank = load_json(DATA_DIR / "ranking_latest.json")
     if not rank:
         await update.message.reply_text("Nessun ranking disponibile. Lancia weekly_run.")
@@ -193,48 +252,11 @@ async def cmd_rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
         out.append("🏔️ *TOP 10 LONG-TERM*")
         for i, x in enumerate(rank["top_long"], 1):
             out.append(f"{i}. {x['ticker']} — {x['score']:.0f}/100 — {x['headline']}")
-    await update.message.reply_text("\n".join(out), parse_mode=constants.ParseMode.MARKDOWN)
-
-
-async def cmd_watch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    if not args:
-        await update.message.reply_text("Uso: /watch TICKER")
-        return
-    tk = args[0].upper()
-    wl = load_json(WATCH_FILE, default=[])
-    if tk not in wl:
-        wl.append(tk)
-        save_json(WATCH_FILE, wl)
-    await update.message.reply_text(f"👁 In watch: {tk} (totale: {len(wl)})")
-
-
-async def cmd_unwatch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    if not args:
-        return
-    tk = args[0].upper()
-    wl = load_json(WATCH_FILE, default=[])
-    wl = [x for x in wl if x != tk]
-    save_json(WATCH_FILE, wl)
-    await update.message.reply_text(f"Rimosso: {tk}")
-
-
-async def cmd_macro(update, context):
-    m = load_json(DATA_DIR / "macro.json")
-    if not m:
-        await update.message.reply_text("Macro snapshot non disponibile.")
-        return
-    lines = ["🌍 *MACRO SNAPSHOT*"]
-    for k, v in m.items():
-        if isinstance(v, dict) and "value" in v:
-            lines.append(f"• {k}: {v['value']}  _(asof {v.get('asof','?')})_")
-        elif k != "asof":
-            lines.append(f"• {k}: {v}")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def cmd_regime(update, context):
+    git_pull()
     r = load_json(DATA_DIR / "regime.json")
     if not r:
         await update.message.reply_text("Regime non disponibile.")
@@ -249,14 +271,18 @@ async def cmd_regime(update, context):
 
 
 async def cmd_perf(update, context):
+    git_pull()
     p = load_json(DATA_DIR / "performance_latest.json")
     if not p:
         await update.message.reply_text("Nessun report performance disponibile. Aspetta il tracker venerdì.")
         return
-    await update.message.reply_text(p.get("text", "n/d"), parse_mode="Markdown")
+    for chunk in smart_chunks(p.get("text", "n/d")):
+        await update.message.reply_text(chunk, parse_mode="Markdown")
 
 
 def main():
+    threading.Thread(target=_refresh_loop, daemon=True).start()
+    git_pull()
     token = env("TELEGRAM_BOT_TOKEN", required=True)
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
@@ -268,7 +294,6 @@ def main():
     app.add_handler(CommandHandler("macro", cmd_macro))
     app.add_handler(CommandHandler("regime", cmd_regime))
     app.add_handler(CommandHandler("perf", cmd_perf))
-    # plain ticker
     app.add_handler(MessageHandler(filters.Regex(r"^[A-Za-z0-9\.\-]{1,8}$") & ~filters.COMMAND, cmd_analyze))
     log.info("Bot polling started")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
