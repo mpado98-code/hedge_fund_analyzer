@@ -236,24 +236,40 @@ def format_report(agg: dict, pos: dict) -> str:
     return "\n".join(lines)
 
 
+def _smart_chunks(text: str, size: int = 3800) -> list[str]:
+    if len(text) <= size:
+        return [text]
+    chunks, current = [], ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > size:
+            if current:
+                chunks.append(current)
+            current = line
+        else:
+            current = (current + "\n" + line) if current else line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def telegram_send(text: str):
     token = env("TELEGRAM_BOT_TOKEN")
     chat = env("TELEGRAM_CHAT_ID")
     if not (token and chat):
         return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat, "text": text, "parse_mode": "Markdown"},
-            timeout=15,
-        )
-    except Exception as e:
-        log.error(f"telegram: {e}")
+    for c in _smart_chunks(text):
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat, "text": c, "parse_mode": "Markdown"},
+                timeout=15,
+            )
+        except Exception as e:
+            log.error(f"telegram: {e}")
 
 
 def main():
     log.info("=== TRACKER START ===")
-    # Apri eventuali nuove posizioni dal ranking della settimana
     rank = load_json(DATA_DIR / "ranking_latest.json")
     if rank:
         open_from_ranking(rank)
