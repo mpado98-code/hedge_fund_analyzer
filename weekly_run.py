@@ -143,17 +143,34 @@ def enrich_watchlist(tickers: list[str]) -> dict:
     return enriched
 
 
-def telegram_send(text: str, parse_mode: str = "Markdown") -> None:
+def _smart_chunks(text: str, size: int = 3800) -> list[str]:
+    """Split sui newline, non taglia frasi a metà."""
+    if len(text) <= size:
+        return [text]
+    chunks, current = [], ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > size:
+            if current:
+                chunks.append(current)
+            current = line
+        else:
+            current = (current + "\n" + line) if current else line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def telegram_send(text: str, parse_mode: str | None = "Markdown") -> None:
     token = env("TELEGRAM_BOT_TOKEN", required=True)
     chat = env("TELEGRAM_CHAT_ID", required=True)
-    # split lungo
-    chunks = [text[i:i + 3800] for i in range(0, len(text), 3800)]
-    for c in chunks:
+    for c in _smart_chunks(text):
+        payload = {"chat_id": chat, "text": c, "disable_web_page_preview": True}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         try:
             requests.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat, "text": c, "parse_mode": parse_mode, "disable_web_page_preview": True},
-                timeout=15,
+                json=payload, timeout=15,
             )
         except Exception as e:
             log.error(f"telegram send: {e}")
@@ -284,7 +301,9 @@ def main():
     time.sleep(2)
     telegram_send(format_ranking(top_long, "long", regime))
 
-    log.info(f"=== WEEKLY DONE  short top={top_short[0]['ticker'] if top_short else 'n/a'}  long top={top_long[0]['ticker'] if top_long else 'n/a'} ===")
+    short_tag = top_short[0]['ticker'] if top_short else 'n/a'
+    long_tag = top_long[0]['ticker'] if top_long else 'n/a'
+    log.info(f"=== WEEKLY DONE  short top={short_tag}  long top={long_tag} ===")
 
 
 if __name__ == "__main__":
